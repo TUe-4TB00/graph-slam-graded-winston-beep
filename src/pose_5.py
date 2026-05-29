@@ -24,10 +24,17 @@ def add_pose(graph, initial_estimate, pose_5):
 def add_landmark_measurement(graph, result, pose_5, landmark):
     # Adding the measurement from X(5) to the chosen landmark using our helper function `add_landmark_measurement_from_global` which calculates the correct bearing and range from the global poses.``
     landmark_point = result.atPoint2(L(landmark))
+    # Use the optimized pose for X(5) (from the result) when computing the bearing/range
+    try:
+        pose_for_measurement = result.atPose2(X(5))
+    except Exception:
+        # Fall back to the provided global candidate pose
+        pose_for_measurement = pose_5
+
     graph = add_landmark_measurement_from_global(
         graph=graph,
         pose_key=X(5),
-        pose=pose_5,
+        pose=pose_for_measurement,
         landmark_key=L(landmark),
         landmark_point=landmark_point,
         measurement_noise=MEASUREMENT_NOISE
@@ -65,9 +72,11 @@ def minimize_marginals(graph, initial_estimate, pose_options):
             
             # Calculate marginal covariances
             marginals = gtsam.Marginals(test_graph, result)
-            
-            # Sum of marginals for both landmarks
-            sum_of_marginals = marginals.marginalCovariance(L(1)).sum() + marginals.marginalCovariance(L(2)).sum()
+
+            # Trace of marginal covariance for the measured landmark (sum of variances)
+            sum_of_marginals = 0.0
+            for i in [1, 2]:
+                sum_of_marginals += float(np.trace(marginals.marginalCovariance(L(i))))
             
             # Keep track of the best option
             if sum_of_marginals < min_marginals_sum:
@@ -97,9 +106,16 @@ def minimize_errors(graph, initial_estimate, pose_options):
             test_graph = add_landmark_measurement(test_graph, result, pose_5, landmark_num)
             result = optimize(test_graph, result)
             
-            # Calculate the chi-squared error for the optimization
-            error_sum = test_graph.error(result)
-            
+            # Calculate the sum of pose errors for X(1), X(2), X(3)
+            # Compare optimized result to the initial estimates (test_estimate)
+            error_sum = 0.0
+            for i in [1, 2, 3]:
+                optimized_pose = result.atPose2(X(i))
+                prior_pose = test_estimate.atPose2(X(i))
+                delta = optimized_pose.localCoordinates(prior_pose)
+                # use squared norm to accumulate error
+                error_sum += float(np.dot(delta, delta))
+
             # Keep track of the best option
             if error_sum < min_error_sum:
                 min_error_sum = error_sum
